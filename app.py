@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # ============================================================
-# ENVIRONMENT / CONFIG
+# CONFIGURATION
 # ============================================================
 
 load_dotenv()
@@ -78,14 +78,15 @@ st.markdown(
 # ============================================================
 
 def call_groq(messages):
-    """
-    Send a request to Groq and safely process the response.
-    """
+
+    # --------------------------------------------------------
+    # CHECK API KEY
+    # --------------------------------------------------------
 
     if not api_key:
         st.error(
-            "GROQ_API_KEY is not configured. "
-            "Please add GROQ_API_KEY to your Render environment variables."
+            "GROQ_API_KEY is missing. "
+            "Please add it under Render → Environment Variables."
         )
         return ""
 
@@ -98,10 +99,15 @@ def call_groq(messages):
         "model": MODEL,
         "messages": messages,
         "temperature": 0.2,
-        "reasoning_effort": "low"
+        "include_reasoning": False
     }
 
     try:
+
+        # ----------------------------------------------------
+        # CALL GROQ
+        # ----------------------------------------------------
+
         response = requests.post(
             GROQ_API_URL,
             headers=headers,
@@ -110,12 +116,22 @@ def call_groq(messages):
         )
 
         # ----------------------------------------------------
-        # API ERROR
+        # DEBUG INFORMATION
+        # ----------------------------------------------------
+
+        st.caption(
+            f"Groq model: `{MODEL}` | "
+            f"HTTP status: `{response.status_code}`"
+        )
+
+        # ----------------------------------------------------
+        # HANDLE HTTP ERROR
         # ----------------------------------------------------
 
         if not response.ok:
+
             st.error(
-                f"Groq API Error: HTTP {response.status_code}"
+                f"Groq API returned HTTP {response.status_code}"
             )
 
             try:
@@ -132,60 +148,122 @@ def call_groq(messages):
 
         try:
             result = response.json()
+
         except ValueError:
-            st.error("Groq returned an invalid JSON response.")
+
+            st.error(
+                "Groq returned a response that is not valid JSON."
+            )
+
             st.code(response.text)
+
             return ""
 
         # ----------------------------------------------------
-        # CHECK RESPONSE STRUCTURE
+        # DEBUG RESPONSE STRUCTURE
         # ----------------------------------------------------
 
         if "choices" not in result:
-            st.error("Groq returned an unexpected response.")
+
+            st.error(
+                "Groq response does not contain a 'choices' field."
+            )
+
+            st.write("Full Groq response:")
+
             st.json(result)
+
             return ""
+
+        # ----------------------------------------------------
+        # CHECK CHOICES
+        # ----------------------------------------------------
 
         if not result["choices"]:
-            st.error("Groq returned an empty response.")
+
+            st.error(
+                "Groq returned an empty choices array."
+            )
+
             st.json(result)
+
             return ""
 
-        message = result["choices"][0].get("message", {})
+        # ----------------------------------------------------
+        # EXTRACT MESSAGE
+        # ----------------------------------------------------
 
-        content = message.get("content")
+        message = result["choices"][0].get(
+            "message",
+            {}
+        )
+
+        content = message.get(
+            "content"
+        )
+
+        # ----------------------------------------------------
+        # CHECK CONTENT
+        # ----------------------------------------------------
 
         if not content:
+
             st.error(
-                "Groq returned a response without any content."
+                "Groq returned a message without content."
             )
+
             st.json(result)
+
             return ""
 
         return content
 
+    # --------------------------------------------------------
+    # TIMEOUT
+    # --------------------------------------------------------
+
     except requests.exceptions.Timeout:
+
         st.error(
-            "The request to Groq timed out. Please try again."
+            "The request to Groq timed out after 60 seconds."
         )
+
         return ""
 
-    except requests.exceptions.ConnectionError:
+    # --------------------------------------------------------
+    # CONNECTION ERROR
+    # --------------------------------------------------------
+
+    except requests.exceptions.ConnectionError as e:
+
         st.error(
-            "Could not connect to Groq. Please try again."
+            f"Could not connect to Groq: {e}"
         )
+
         return ""
+
+    # --------------------------------------------------------
+    # REQUEST ERROR
+    # --------------------------------------------------------
 
     except requests.exceptions.RequestException as e:
+
         st.error(
             f"Groq request failed: {e}"
         )
+
         return ""
 
+    # --------------------------------------------------------
+    # UNKNOWN ERROR
+    # --------------------------------------------------------
+
     except Exception as e:
+
         st.error(
-            f"Unexpected error while communicating with Groq: {e}"
+            f"Unexpected error: {repr(e)}"
         )
+
         return ""
 
 
@@ -195,8 +273,12 @@ def call_groq(messages):
 
 def summarize_text(document_text):
 
-    # Keep the current behavior of your application.
-    # This can be upgraded later to intelligent chunking.
+    # Current application behavior:
+    # Send first 6000 characters.
+    #
+    # We can implement intelligent chunking later
+    # for large documents.
+
     document_content = document_text[:6000]
 
     messages = [
@@ -204,27 +286,27 @@ def summarize_text(document_text):
             "role": "system",
             "content": (
                 "You are a professional document summarizer. "
-                "Analyze the provided document and produce a concise, "
-                "clear and business-friendly summary.\n\n"
+                "Analyze the provided document and create a "
+                "clear, concise business-friendly summary.\n\n"
 
                 "Return exactly 5 bullet points.\n\n"
 
-                "Focus on the most important:\n"
-                "- Facts\n"
-                "- Decisions\n"
-                "- Numbers\n"
+                "Focus on:\n"
+                "- Important facts\n"
+                "- Key decisions\n"
+                "- Important numbers\n"
                 "- Dates\n"
                 "- Requirements\n"
                 "- Business implications\n\n"
 
                 "Do not invent information. "
-                "Only use information contained in the document."
+                "Use only information contained in the document."
             )
         },
         {
             "role": "user",
             "content": (
-                "Summarize this document:\n\n"
+                "Summarize the following document:\n\n"
                 + document_content
             )
         }
@@ -245,7 +327,7 @@ def ask_about_document(document_text, question):
         {
             "role": "system",
             "content": (
-                "You are a precise document assistant. "
+                "You are a precise document assistant.\n\n"
 
                 "Answer the user's question using ONLY "
                 "information contained in the provided document.\n\n"
@@ -254,7 +336,7 @@ def ask_about_document(document_text, question):
                 "1. Do not invent information.\n"
                 "2. Do not use outside knowledge.\n"
                 "3. If the answer cannot be found in the document, "
-                "reply: I don't know.\n"
+                "reply exactly: I don't know.\n"
                 "4. Keep the answer clear and concise."
             )
         },
@@ -262,11 +344,12 @@ def ask_about_document(document_text, question):
             "role": "user",
             "content": (
                 "DOCUMENT:\n"
-                "-------------------------\n"
+                "--------------------------------\n"
                 f"{document_content}\n"
-                "-------------------------\n\n"
+                "--------------------------------\n\n"
 
-                f"QUESTION:\n{question}"
+                "QUESTION:\n"
+                f"{question}"
             )
         }
     ]
@@ -275,50 +358,72 @@ def ask_about_document(document_text, question):
 
 
 # ============================================================
-# PDF TEXT EXTRACTION
+# PDF EXTRACTION
 # ============================================================
 
 def extract_text(uploaded_file):
 
     try:
-        reader = PyPDF2.PdfReader(uploaded_file)
+
+        reader = PyPDF2.PdfReader(
+            uploaded_file
+        )
 
         text = ""
 
-        for page_number, page in enumerate(reader.pages):
+        for page_number, page in enumerate(
+            reader.pages
+        ):
 
             try:
+
                 page_text = page.extract_text()
 
                 if page_text:
                     text += page_text + "\n"
 
             except Exception as e:
+
                 st.warning(
-                    f"Could not extract page {page_number + 1}: {e}"
+                    f"Could not extract page "
+                    f"{page_number + 1}: {e}"
                 )
 
         return text
 
     except Exception as e:
+
         st.error(
             f"Error reading the PDF: {e}"
         )
+
         return ""
 
 
 # ============================================================
-# APPLICATION
+# APPLICATION HEADER
 # ============================================================
 
 st.title("📄 PDF Document Assistant")
 
 st.write(
     """
-    Upload a PDF document, then choose to either get a
-    concise summary or ask questions about its contents.
+    Upload a PDF document, then choose whether you want
+    a concise summary or ask questions about the document.
     """
 )
+
+
+# ============================================================
+# API STATUS
+# ============================================================
+
+if not api_key:
+
+    st.warning(
+        "⚠️ GROQ_API_KEY is not configured. "
+        "Add it under Render → Environment Variables."
+    )
 
 
 # ============================================================
@@ -327,21 +432,26 @@ st.write(
 
 uploaded_file = st.file_uploader(
     "Upload a PDF",
-    type="pdf"
+    type=["pdf"]
 )
 
 
 if uploaded_file:
 
     # --------------------------------------------------------
-    # EXTRACT TEXT
+    # EXTRACT PDF
     # --------------------------------------------------------
 
-    with st.spinner("Reading PDF..."):
-        document_text = extract_text(uploaded_file)
+    with st.spinner(
+        "Reading PDF..."
+    ):
+
+        document_text = extract_text(
+            uploaded_file
+        )
 
     # --------------------------------------------------------
-    # EMPTY PDF
+    # CHECK PDF
     # --------------------------------------------------------
 
     if not document_text.strip():
@@ -352,19 +462,34 @@ if uploaded_file:
 
     else:
 
-        # Store document
-        st.session_state["document_text"] = document_text
+        # ----------------------------------------------------
+        # STORE DOCUMENT
+        # ----------------------------------------------------
 
-        # Basic document information
-        word_count = len(document_text.split())
+        st.session_state[
+            "document_text"
+        ] = document_text
+
+        # ----------------------------------------------------
+        # DOCUMENT INFO
+        # ----------------------------------------------------
+
+        word_count = len(
+            document_text.split()
+        )
+
+        character_count = len(
+            document_text
+        )
 
         st.info(
             f"📄 PDF loaded successfully — "
-            f"{word_count:,} words extracted."
+            f"{word_count:,} words | "
+            f"{character_count:,} characters"
         )
 
         # ----------------------------------------------------
-        # MODE
+        # MODE SELECTION
         # ----------------------------------------------------
 
         mode = st.radio(
@@ -376,12 +501,14 @@ if uploaded_file:
         )
 
         # ====================================================
-        # SUMMARIZE MODE
+        # SUMMARIZE
         # ====================================================
 
         if mode == "Summarize":
 
-            st.subheader("Summary")
+            st.subheader(
+                "Summary"
+            )
 
             if st.button(
                 "Generate Summary",
@@ -396,16 +523,15 @@ if uploaded_file:
                         document_text
                     )
 
-                # Only show success if we actually received
-                # a response from Groq.
-
                 if summary:
 
                     st.success(
                         "Summary completed."
                     )
 
-                    st.markdown(summary)
+                    st.markdown(
+                        summary
+                    )
 
                     st.download_button(
                         "Download Summary",
@@ -414,9 +540,8 @@ if uploaded_file:
                         mime="text/plain"
                     )
 
-
         # ====================================================
-        # Q&A MODE
+        # ASK QUESTIONS
         # ====================================================
 
         elif mode == "Ask Questions":
@@ -427,7 +552,9 @@ if uploaded_file:
 
             question = st.text_input(
                 "Type your question here:",
-                placeholder="Example: What are the main conclusions?"
+                placeholder=(
+                    "Example: What are the main conclusions?"
+                )
             )
 
             if st.button(
@@ -458,4 +585,6 @@ if uploaded_file:
                             "Answer"
                         )
 
-                        st.markdown(answer)
+                        st.markdown(
+                            answer
+                        )
